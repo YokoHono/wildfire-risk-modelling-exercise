@@ -99,12 +99,18 @@ def build_notebook(
         ),
         code(
             """
-            import os, subprocess
-            subprocess.run(['git', 'lfs', 'install', '--local'], check=False)
-            subprocess.run(['git', 'lfs', 'pull'], check=False)
+            !conda install -y -c conda-forge git-lfs
+            !git lfs install
+            !git lfs pull
+            """
+        ),
+        code(
+            """
+            import os
 
             # Sanity check: any LFS-tracked file we'll read below should be
-            # a real binary now, not a pointer.
+            # a real binary now, not a pointer. Raises a clear error if the
+            # !git lfs pull above silently failed (auth, network, etc.).
             def _assert_not_lfs_pointer(path):
                 if not os.path.exists(path):
                     return
@@ -112,9 +118,10 @@ def build_notebook(
                     head = fh.read(64)
                 if head.startswith(b'version https://git-lfs'):
                     raise RuntimeError(
-                        f"{path} is still a git-lfs pointer. "
-                        "`git lfs pull` failed — run it manually from the "
-                        "repo root, then re-execute this cell."
+                        f"{path} is still a git-lfs pointer. The "
+                        "`!git lfs pull` cell above failed — check its "
+                        "output, fix the cause (typically auth or no LFS "
+                        "remote configured), and re-run from the top."
                     )
             """
         ),
