@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Wildfire Property Risk — Methodology and Submission Report</title>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #555;
+    --rule: #d8d4cc;
+    --bg: #ffffff;
+    --code-bg: #f4f1ec;
+    --accent: #b8401e;
+  }
+  html, body { background: var(--bg); color: var(--ink); }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 11.5pt;
+    line-height: 1.55;
+    max-width: 820px;
+    margin: 2.5em auto 4em;
+    padding: 0 1.6em;
+  }
+  h1 { font-size: 1.7em; margin: 0 0 .25em; letter-spacing: -.01em; }
+  h2 {
+    font-size: 1.18em; margin: 2em 0 .35em;
+    padding-bottom: .25em; border-bottom: 1px solid var(--rule);
+  }
+  h3 { font-size: 1.02em; margin: 1.6em 0 .25em; color: var(--ink); }
+  p { margin: .55em 0; }
+  ul, ol { margin: .5em 0 .5em 1.5em; padding: 0; }
+  li { margin: .15em 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre {
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 10.2pt;
+  }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg); padding: .8em 1em; border-radius: 4px;
+    overflow-x: auto; line-height: 1.45;
+  }
+  pre code { background: transparent; padding: 0; }
+  table {
+    border-collapse: collapse; width: 100%; margin: 1em 0;
+    font-size: 10.4pt;
+  }
+  th, td {
+    border-bottom: 1px solid var(--rule);
+    padding: 6px 9px; text-align: left; vertical-align: top;
+  }
+  th { background: #faf8f4; font-weight: 600; }
+  .meta { color: var(--muted); font-size: 10.5pt; margin: .25em 0 1.6em; }
+  blockquote {
+    border-left: 3px solid var(--rule); padding: .2em 0 .2em 1em;
+    margin: .8em 0; color: var(--muted);
+  }
+  .schema td:nth-child(1) { white-space: nowrap; font-family: "SF Mono", monospace; font-size: 9.8pt; }
+  .schema td:nth-child(2), .schema td:nth-child(3) { white-space: nowrap; color: var(--muted); font-size: 10pt; }
+  @media print {
+    body { max-width: none; margin: 1in 0.8in; font-size: 10.5pt; }
+    h2 { page-break-after: avoid; }
+    table, pre { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Wildfire Property Risk — Methodology and Submission Report</h1>
+<p class="meta">
+UL Wildfire Risk Modeling Exercise (2026), OroraTech submission.<br>
+<strong>Scenarios:</strong> Town of Forests (Lake Tahoe, CA — mountainous WUI / Intermix),
+Town of Prairies (Amarillo, TX — flat grassland WUI).
+</p>
+
+<h2>1. Overview</h2>
+<p>
+Every building gets one risk score in <code>[0, 1]</code>, built from the five
+components the exercise manual defines: hazard, vulnerability, exposure, severity
+of consequence, and capacity to withstand impact. The first four amplify expected
+loss; capacity dampens it.
+</p>
+<pre><code>risk_gross = (Hazard × Vulnerability × Exposure × Severity) ^ (1/4)
+risk_net   = risk_gross × (1 − 0.5 × Capacity)
+risk_score = min-max rescaled to [0, 1] within this scenario</code></pre>
+<p>
+The fourth root keeps the multiplicative semantics of the catastrophe-modelling
+identity (a building scores high only when all four amplifiers contribute) while
+keeping absolute numbers in a range that's comfortable to read on a map.
+Capacity dampens rather than caps, so a fully resilient property has its gross
+risk halved at most, not zeroed.
+</p>
+<p>
+<code>Forest_submission.ipynb</code> and <code>Prairie_submission.ipynb</code>
+are the canonical implementation: every cell maps to one step of the pipeline,
+§2b documents the inputs, §2c lists the synthetic fields we don't consume
+(with reasons), and §6c carries the output schema. This document is the
+higher-level story plus the information evaluators need to interpret and
+locate the deliverables.
+</p>
+
+<h2>2. Inputs</h2>
+<p>
+The synthetic exercise data is used as provided. Four real-world datasets back
+specific components:
+</p>
+<table>
+  <thead><tr><th>Dataset</th><th>Used for</th></tr></thead>
+  <tbody>
+    <tr><td>CAL FIRE DINS damage inspections (~95k fire records)</td>
+        <td>training the vulnerability regressor</td></tr>
+    <tr><td>MTBS burn perimeters</td>
+        <td>training labels for the climate hazard classifier</td></tr>
+    <tr><td>FPA-FOD ignitions (1.88M, 1992–2015)</td>
+        <td>density features for climate hazard</td></tr>
+    <tr><td>USFS WUI 2020 (Radeloff / SILVIS Lab)</td>
+        <td>exposure modifier for WUI-overlapping parcels</td></tr>
+  </tbody>
+</table>
+<p>
+Both scenarios also use OroraTech's own coupled fire-spread simulation as the
+scenario-hazard input. The wildland front is carried by
+<strong>ForeFire</strong> (Filippi et al. 2010), a discrete-event
+front-tracking solver running the Rothermel (1972) surface fire-spread model
+on the LANDFIRE-derived fuel / terrain / moisture rasters. We couple a WUI
+structure-ignition overlay implementing the Purnomo et al. (2024 / 2025)
+semi-physical level-set model on top of ForeFire — direct flame contact,
+point-source radiation, lognormal-PDF embers from Sardoy et al. (2008), and
+the cumulative flux-time-product ignition criterion of Lee (2009). The
+overlay implementation lives at
+<a href="structure_overlay.py"><code>structure_overlay.py</code></a>. For each
+scenario the simulation produces 73 cumulative wildland-perimeter slices over
+the 12 h scenario plus a per-structure ignition timestamp wherever the fire
+reaches a building (1,129 structures in Forest, 1,039 in Prairie).
+</p>
+
+<h2>3. Components</h2>
+
+<h3>3.1 Hazard</h3>
+<p>"Did fire actually reach this building in the scenario?"</p>
+<p>
+For each scenario we read the per-property ignition timestamps from the
+OroraTech sim and map them to a score with
+<code>hazard_sim = max(0, 1 − arrival_hours / 12)</code>. A building ignited
+in the first hour gets ~0.9; one that doesn't ignite gets 0.
+</p>
+<p>
+To avoid relying only on a single sim run, we also train a gradient-boosted
+classifier on the MTBS burn perimeter that overlaps each scenario's extent
+(Angora 2007 for Forest, Stone Ridge 2011 for Prairie), using LANDFIRE-derived
+rasters and FPA-FOD ignition density as features. This gives every building a
+non-zero baseline <code>hazard_climate</code>.
+</p>
+<p>
+We combine the two with <code>hazard = max(hazard_climate, hazard_sim)</code>
+rather than a 50/50 blend. Averaging would halve the sim signal for ignited
+buildings, given how close to zero the MTBS classifier scores the bulk of the
+area. Trained climate-hazard classifier AUC: 0.95 (Forest), 0.99 (Prairie).
+</p>
+
+<h3>3.2 Vulnerability</h3>
+<p>
+A <code>HistGradientBoostingRegressor</code> trained on ~95k fire-only
+structural records from CAL FIRE DINS, predicting damage severity on a
+<code>[0, 1]</code> scale (destroyed = 1, no damage = 0). The 22 features
+mirror the synthetic schema: roof type, siding, eaves, vent screens, windows,
+deck, fence, year built, property value.
+</p>
+<p>
+Held-out performance: MAE ≈ 0.28, R² ≈ 0.47. Good enough for relative ranking,
+not calibrated for absolute damage probabilities. Defensible-space compliance
+reduces the raw output by up to 40 %
+(<code>vulnerability = raw × (1 − 0.4 × mean(zone_0, zone_1, zone_2))</code>).
+</p>
+
+<h3>3.3 Exposure</h3>
+<p>
+What's physically at stake if a building is lost. Three rank-normalised
+sub-scores: asset value (50 %), footprint × usage weight (30 %), and
+adjacency (20 %). Buildings whose polygon intersects a USFS WUI 2020 Intermix
+or Interface block get a <code>1.15×</code> modifier.
+</p>
+
+<h3>3.4 Severity of consequence</h3>
+<p>
+Loss-of-life and service-disruption magnitude. We weight occupancy load
+(<code>sqft × stories</code>) by usage type — residential 1.0–1.4, mixed 1.2,
+commercial 0.6, industrial 0.5 — and rank-normalise. This is a separate axis
+from exposure: exposure says "this asset is worth $X"; severity says "losing
+this asset hurts in non-financial ways too".
+</p>
+
+<h3>3.5 Capacity to withstand impact</h3>
+<p>
+The dampening component. Five resilience sub-scores blended together with the
+weights below; the weighted sum is then applied as
+<code>risk_net = risk_gross × (1 − 0.5 × capacity)</code>, so a perfect-capacity
+building has its gross risk halved.
+</p>
+<table>
+  <thead><tr><th>Sub-score</th><th>Weight</th><th>How it's computed</th></tr></thead>
+  <tbody>
+    <tr><td><code>cap_defensible_space</code></td><td>0.35</td>
+        <td>Mean of <code>zone_0_compliant</code>, <code>zone_1_defensible</code>,
+            <code>zone_2_defensible</code> — 1 if all three zones are
+            compliant.</td></tr>
+    <tr><td><code>cap_construction_quality</code></td><td>0.25</td>
+        <td>Weighted sum of <code>year_built_2000_2025</code> (modern code),
+            <code>siding_non_combust</code> + <code>roof_non_combust</code>
+            (non-combustible envelope), and <code>siding_fire_resist</code>
+            (fire-resistant facade).</td></tr>
+    <tr><td><code>cap_ember_resistance</code></td><td>0.20</td>
+        <td>Weighted sum of fine vent screens
+            (<code>ventscreens_1_8</code> &gt; <code>ventscreens_1_4</code> &gt;
+            <code>ventscreens_1_2</code>), tempered windows
+            (<code>window_*_tempered</code>), and enclosed eaves
+            (<code>eaves_enclosed</code>).</td></tr>
+    <tr><td><code>cap_access</code></td><td>0.15</td>
+        <td><code>exp(−dist_to_road_m / 60)</code>. Closer to a road → faster
+            response and evacuation; falls off with a ~60 m e-folding
+            length.</td></tr>
+    <tr><td><code>cap_wui_maintenance</code></td><td>0.05</td>
+        <td>Rank-normalised <code>acres_treated_wui</code> (0.5 if null).</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Output deliverables</h2>
+<p>
+Everything submission-relevant lives in <code>outputs/</code>. Filenames are
+scenario-prefixed (<code>Forest_…</code> / <code>Prairie_…</code>).
+</p>
+<ul>
+  <li><code>&lt;scenario&gt;_risk_scored_5component.geojson</code> — the
+    headline deliverable. Every building polygon plus the five component
+    scores, the five capacity sub-scores, and the final risk, alongside the
+    full set of synthetic input attributes for auditing how a score was
+    reached. Schema in §5. 108 columns (Forest) / 99 columns (Prairie).</li>
+  <li><code>&lt;scenario&gt;_risk_arcgis.geojson</code> — the same building
+    polygons trimmed to the 51 most useful columns (all component / capacity
+    / risk scores plus the construction, defensible-space and adjacency
+    inputs an evaluator might want to filter on). This is the file uploaded
+    to ArcGIS Online (§4.1); see <a href="make_arcgis_outputs.py"><code>make_arcgis_outputs.py</code></a>
+    for the exact column list.</li>
+  <li><code>&lt;scenario&gt;_risk_components.html</code> — interactive folium
+    map with seven togglable layers: top-10 highlighted, then each component
+    and the final risk. Per-layer adaptive colour scale so bimodal
+    distributions (Forest hazard) read clearly.</li>
+  <li><code>&lt;scenario&gt;_risk_components_raw.html</code> — same map with a
+    fixed <code>vmin = 0</code> scale on every layer, for honest side-by-side
+    comparison without the adaptive stretch.</li>
+  <li><code>&lt;scenario&gt;_risk_map.html</code> — single-layer interactive
+    map of the final score.</li>
+  <li><code>&lt;scenario&gt;_risk_scored.geojson</code> — 3-component
+    intermediate that <code>run.py</code> writes; the notebooks build the
+    5-component score on top.</li>
+</ul>
+
+<p>
+The wildland surface-fire spread itself is also published as a separate
+GeoJSON per scenario, so evaluators can inspect or overlay the fire front
+independently of the per-building scoring:
+</p>
+<ul>
+  <li><code>data_cache/fire_spread_simulations/forest_scenario/forecast_forest_wui.geojson</code>
+      and <code>data_cache/fire_spread_simulations/prairie_scenario/forecast_prairie_wui_minSpeed0015.geojson</code> —
+      73 cumulative wildland-perimeter slices over the 12 h scenario, one
+      <code>MultiPolygon</code> per slice with properties <code>date</code>
+      (ISO timestamp) and <code>area_sqkm</code> (cumulative burned area in
+      square kilometres). EPSG:4326.</li>
+  <li><code>forecast_&lt;scenario&gt;_properties.geojson</code> in the same
+      folder — per-structure ignition timestamps for every building the
+      fire reaches (1,129 in Forest, 1,039 in Prairie). Properties include
+      <code>bldgid</code>, <code>usage</code>, <code>property_value</code>,
+      <code>ignition</code> (ISO timestamp), and
+      <code>arrival_hours_from_ignition</code>. The same arrival times drive
+      the <code>hazard_sim</code> column in the 5-component output.</li>
+</ul>
+
+<h3>4.1 Esri-compatible Feature Service (per manual §2b)</h3>
+<p>
+The slimmed <code>&lt;scenario&gt;_risk_arcgis.geojson</code> file (51
+columns, the column set listed in
+<a href="make_arcgis_outputs.py"><code>make_arcgis_outputs.py</code></a>) is
+uploaded to ArcGIS Online as a hosted feature service and shared into the
+dedicated exercise Group, view-only as required by §2b. Layer naming
+convention: <code>OroraTech_&lt;Scenario&gt;_RiskScore</code>. The layer's
+field schema is a subset of §5 below — all score columns and the
+audit-useful inputs are kept; the 50+ raw inputs that only feed the
+classifiers (raster samples, treelist features, ignition densities, string
+duplicates of binary flags) are dropped. Evaluators wanting a colour ramp
+on the headline score can configure graduated colours on
+<code>risk_score</code> (0–1) in the layer's visualisation settings, or
+swap in any of the component columns (<code>hazard</code>,
+<code>vulnerability</code>, <code>exposure</code>, <code>severity</code>,
+<code>capacity</code>) to symbolise on that axis instead.
+</p>
+
+<h2>5. Output GeoJSON schema</h2>
+<p>
+GeoJSON FeatureCollection in EPSG:4326 (WGS84). Each feature carries the
+original building polygon plus the columns below. All scores are
+dimensionless in <code>[0, 1]</code> unless noted.
+</p>
+
+<table class="schema">
+  <thead><tr><th>Column</th><th>Type</th><th>Range</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>bldgid</td><td>int</td><td>—</td><td>building identifier from the synthetic dataset (not unique)</td></tr>
+    <tr><td>usage</td><td>str</td><td>—</td><td>Residential / Commercial / Industrial / Other</td></tr>
+    <tr><td>property_value</td><td>float (USD)</td><td>≥ 0</td><td>replacement-value proxy from the synthetic data</td></tr>
+    <tr><td>building_sqft</td><td>float</td><td>≥ 0</td><td>footprint area in ft²</td></tr>
+    <tr><td>hazard_climate</td><td>float</td><td>[0, 1]</td><td><code>P(burn)</code> from the MTBS-trained landscape classifier</td></tr>
+    <tr><td>hazard_sim</td><td>float</td><td>[0, 1]</td><td>scenario hazard from the per-property arrival time, <code>max(0, 1 − arrival/12)</code></td></tr>
+    <tr><td>hazard</td><td>float</td><td>[0, 1]</td><td><code>max(hazard_climate, hazard_sim)</code></td></tr>
+    <tr><td>ignition_hour_from_sim</td><td>float (h) or NaN</td><td>[0, 12]</td><td>when the building first ignites in the OroraTech sim; NaN if not ignited</td></tr>
+    <tr><td>vulnerability</td><td>float</td><td>[0, 1]</td><td>DINS-trained <code>P(damage | fire)</code>, with up to −40 % defensible-space modifier</td></tr>
+    <tr><td>exposure_value</td><td>float</td><td>[0, 1]</td><td>rank of <code>log10(property_value)</code></td></tr>
+    <tr><td>exposure_footprint</td><td>float</td><td>[0, 1]</td><td>rank of <code>sqft × stories</code>, usage-weighted</td></tr>
+    <tr><td>exposure_adjacency</td><td>float</td><td>[0, 1]</td><td>denser cluster + tighter structural separation → higher</td></tr>
+    <tr><td>exposure</td><td>float</td><td>[0, 1]</td><td>blend value (0.5) + footprint (0.3) + adjacency (0.2); × 1.15 if in WUI</td></tr>
+    <tr><td>severity</td><td>float</td><td>[0, 1]</td><td>usage-weighted occupancy-load rank</td></tr>
+    <tr><td>cap_defensible_space</td><td>float</td><td>[0, 1]</td><td>mean of <code>zone_0_compliant</code>, <code>zone_1_defensible</code>, <code>zone_2_defensible</code></td></tr>
+    <tr><td>cap_construction_quality</td><td>float</td><td>[0, 1]</td><td>post-2000 build + non-combust siding/roof + fire-resistant siding</td></tr>
+    <tr><td>cap_ember_resistance</td><td>float</td><td>[0, 1]</td><td>fine vent screens + tempered windows + enclosed eaves</td></tr>
+    <tr><td>cap_access</td><td>float</td><td>[0, 1]</td><td><code>exp(−dist_to_road_m / 60)</code></td></tr>
+    <tr><td>cap_wui_maintenance</td><td>float</td><td>[0, 1]</td><td>rank of <code>acres_treated_wui</code> (0.5 if null)</td></tr>
+    <tr><td>capacity</td><td>float</td><td>[0, 1]</td><td>weighted blend of the five capacity sub-scores</td></tr>
+    <tr><td>risk_gross</td><td>float</td><td>[0, 1]</td><td><code>(H · V · E · S)^(1/4)</code></td></tr>
+    <tr><td>risk_net</td><td>float</td><td>[0, 1]</td><td><code>risk_gross · (1 − 0.5 · capacity)</code></td></tr>
+    <tr><td>risk_score</td><td>float</td><td>[0, 1]</td><td>final per-property risk, min-max rescaled within this scenario</td></tr>
+    <tr><td>risk_decile</td><td>int</td><td>1 – 10</td><td>decile bucket of <code>risk_score</code> (1 = lowest, 10 = highest)</td></tr>
+  </tbody>
+</table>
+<p>
+Most of the synthetic building attributes (roof / siding / eaves / vent / window /
+deck / fence flags, zone compliance, raster samples, treelist canopy values,
+etc.) are also passed through on each feature so an evaluator can filter or
+audit how a particular score was reached. The submission notebooks (§6c)
+carry the long form of this schema.
+</p>
+
+<h2>6. Reading the score</h2>
+<p>
+A value of <code>risk_score</code> near 1.0 means the property is in the worst
+combination of all four amplifiers (fire reaches it, it's vulnerable, it's
+high-value with dense neighbours, losing it has occupancy or service
+consequences) with little resilience to absorb the loss. A value near 0 means
+at least one component is essentially zero — either fire never reaches the
+property, or its construction is fire-resistant, or its replacement value and
+occupancy are negligible, or its resilience is high enough to halve an
+otherwise high score.
+</p>
+<p>
+<code>risk_score</code> is rescaled per scenario, so 0.7 in Forest is
+comparable to another 0.7 in Forest but not directly comparable across to
+Prairie.
+</p>
+
+<h2>7. Score distribution</h2>
+<p>
+Per-scenario summary statistics for each score column on the final 5-component
+output. Useful for sanity-checking that components are well-spread and that
+the geometric-mean aggregation produces a usable dynamic range.
+</p>
+<h3>7.1 Forest (4,417 buildings)</h3>
+<table>
+  <thead><tr><th>Column</th><th>mean</th><th>std</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
+  <tbody>
+    <tr><td><code>hazard</code></td>        <td>0.167</td><td>0.311</td><td>0.000</td><td>0.750</td><td>0.875</td></tr>
+    <tr><td><code>vulnerability</code></td> <td>0.369</td><td>0.199</td><td>0.357</td><td>0.627</td><td>0.922</td></tr>
+    <tr><td><code>exposure</code></td>      <td>0.571</td><td>0.241</td><td>0.567</td><td>0.925</td><td>1.000</td></tr>
+    <tr><td><code>severity</code></td>      <td>0.500</td><td>0.289</td><td>0.500</td><td>0.900</td><td>0.990</td></tr>
+    <tr><td><code>capacity</code></td>      <td>0.260</td><td>0.081</td><td>0.248</td><td>0.371</td><td>0.493</td></tr>
+    <tr><td><code>risk_gross</code></td>    <td>0.152</td><td>0.197</td><td>0.061</td><td>0.513</td><td>0.705</td></tr>
+    <tr><td><code>risk_net</code></td>      <td>0.132</td><td>0.171</td><td>0.053</td><td>0.445</td><td>0.604</td></tr>
+    <tr><td><strong><code>risk_score</code></strong></td>
+        <td><strong>0.169</strong></td><td><strong>0.220</strong></td>
+        <td><strong>0.068</strong></td><td><strong>0.573</strong></td>
+        <td><strong>0.777</strong></td></tr>
+  </tbody>
+</table>
+<p>
+Forest hazard is bimodal: <code>p50 = 0</code> (most buildings sit outside the
+sim arrival footprint) but <code>p90 = 0.75</code> for the structures the
+OroraTech sim reaches. This is the bimodal distribution the
+<code>_components.html</code> map's adaptive <code>vmin</code> stretch is
+designed to surface visually.
+</p>
+
+<h3>7.2 Prairie (2,085 buildings)</h3>
+<table>
+  <thead><tr><th>Column</th><th>mean</th><th>std</th><th>p50</th><th>p90</th><th>p99</th></tr></thead>
+  <tbody>
+    <tr><td><code>hazard</code></td>        <td>0.435</td><td>0.424</td><td>0.694</td><td>0.921</td><td>0.972</td></tr>
+    <tr><td><code>vulnerability</code></td> <td>0.365</td><td>0.182</td><td>0.357</td><td>0.599</td><td>0.848</td></tr>
+    <tr><td><code>exposure</code></td>      <td>0.574</td><td>0.239</td><td>0.572</td><td>0.937</td><td>1.000</td></tr>
+    <tr><td><code>severity</code></td>      <td>0.500</td><td>0.289</td><td>0.500</td><td>0.900</td><td>0.990</td></tr>
+    <tr><td><code>capacity</code></td>      <td>0.262</td><td>0.078</td><td>0.249</td><td>0.369</td><td>0.477</td></tr>
+    <tr><td><code>risk_gross</code></td>    <td>0.282</td><td>0.253</td><td>0.178</td><td>0.646</td><td>0.795</td></tr>
+    <tr><td><code>risk_net</code></td>      <td>0.245</td><td>0.219</td><td>0.149</td><td>0.563</td><td>0.692</td></tr>
+    <tr><td><strong><code>risk_score</code></strong></td>
+        <td><strong>0.302</strong></td><td><strong>0.271</strong></td>
+        <td><strong>0.184</strong></td><td><strong>0.697</strong></td>
+        <td><strong>0.856</strong></td></tr>
+  </tbody>
+</table>
+<p>
+Prairie hazard is much higher than Forest (mean 0.435 vs 0.167) because the
+fire reaches about half of the buildings (1,039 / 2,085 = 49.7 %), compared
+to Forest's 25.6 % (1,129 / 4,417). Severity, exposure and capacity
+distributions are very similar across scenarios because they're rank-based
+and depend only on the within-scenario building stock.
+</p>
+
+<h2>8. Intended use</h2>
+<p>
+Suitable for community wildfire protection planning, mitigation
+prioritisation, pre-incident response planning, resource allocation, and
+insurance portfolio triage. For mitigation specifically, the <code>cap_*</code>
+sub-scores point at <em>which</em> mitigation would most help on a given
+parcel — defensible-space inspection, structural hardening, ember-resistant
+vents, better road access, or fuel-break maintenance.
+</p>
+<p>
+Not appropriate for insurance pricing, life-safety alerts to individual
+residents, or cross-scenario comparison (the rescale is per-scenario).
+</p>
+
+<h2>9. Validation</h2>
+<p>
+Per the manual §6.1.3.f, the model is not formally validated against historical
+losses. The vulnerability regressor reports MAE ≈ 0.28 and R² ≈ 0.47 on a
+held-out 20 % split of DINS records — usable for relative ranking, not for
+absolute damage-probability claims. The climate hazard classifier reports
+AUC ≈ 0.95 (Forest) and 0.99 (Prairie) on held-out grid points, but each
+scenario is in-sample to a single historical fire. The OroraTech sim is the
+authoritative scenario hazard; we treat its arrival timestamps as ground
+truth for <code>hazard_sim</code>.
+</p>
+
+<h2>10. Reproducibility</h2>
+<p>
+Python 3.11 (3.9 also works), ~4 GB RAM, no GPU. End-to-end from cached
+artefacts: about 2 minutes per notebook on Forest, 1 minute on Prairie. Cold
+start (no caches) adds ~15 minutes for the upstream Monte Carlo simulation in
+<code>run.py</code> and 5–10 minutes for the one-off DINS / MTBS / FPA-FOD /
+WUI downloads. The OroraTech fire-spread simulation runs separately; its
+outputs are committed in <code>data_cache/fire_spread_simulations/</code>.
+</p>
+<pre><code>bash install_packages.sh                          # build .venv, install deps
+source .venv/bin/activate
+python run.py --scenario both                     # 3-component intermediate
+python extract_property_ignitions.py              # per-property ignitions
+jupyter trust Forest_submission.ipynb Prairie_submission.ipynb
+jupyter notebook                                  # run all cells in each
+</code></pre>
+
+<h2>11. Limitations</h2>
+<p>
+The vulnerability model captures construction-level damage probability. It
+doesn't say anything about contents loss, post-fire structural integrity, or
+occupant exposure.
+</p>
+<p>
+The climate hazard model is trained on a single historical fire per site, so
+it represents the spatial pattern of <em>that</em> burn, not all possible
+futures. Useful in combination with the sim, not as a standalone prior.
+</p>
+<p>
+The OroraTech sim is deterministic for the provided ignition. We don't run it
+under perturbed wind / moisture to get an ignition probability; we treat the
+arrival time as ground truth for <code>hazard_sim</code>.
+</p>
+<p>
+FPA-FOD stops at 2015. Post-2015 ignition trends (substantially different in
+California) aren't in the features.
+</p>
+<p>
+The aggregation is rescaled per scenario, so <code>risk_score</code> isn't
+directly comparable across Forest ↔ Prairie. Compare within a scenario only.
+</p>
+<p>
+No formal validation against historical losses. Appropriate for relative
+ranking and mitigation prioritisation, not for insurance pricing.
+</p>
+
+<h2>12. References</h2>
+<p>
+The OroraTech Fire Spread Simulation builds on the following published
+models and solvers:
+</p>
+<ul>
+  <li>Rothermel, R.C. (1972). <em>A mathematical model for predicting fire
+    spread in wildland fuels.</em> USDA Forest Service Research Paper INT-115,
+    Ogden, UT.</li>
+  <li>Filippi, J.-B., Morandini, F., Balbi, J.H., &amp; Lynch, D.R. (2010).
+    <em>Discrete event front-tracking simulation of a physical fire-spread
+    model.</em> SIMULATION <strong>86</strong>(10), 629–646.
+    <a href="https://doi.org/10.1177/0037549709343117">doi:10.1177/0037549709343117</a>.
+    Source code: <a href="https://github.com/forefireAPI/firefront">github.com/forefireAPI/firefront</a>.</li>
+  <li>Purnomo, D.M.J., Qin, Y., Theodori, M., Zamanialaei, M., Lautenberger,
+    C., Trouvé, A., &amp; Gollner, M. (2024). <em>Reconstructing modes of
+    destruction in wildland–urban interface fires using a semi-physical
+    level-set model.</em> Proceedings of the Combustion Institute
+    <strong>40</strong>, 105755.
+    <a href="https://doi.org/10.1016/j.proci.2024.105755">doi:10.1016/j.proci.2024.105755</a>
+  </li>
+  <li>Purnomo, D.M.J. et al. (2025). <em>Semi-physical level-set urban fire
+    spread model.</em> Nature Communications.
+    <a href="https://doi.org/10.1038/s41467-025-63386-2">doi:10.1038/s41467-025-63386-2</a>
+  </li>
+  <li>Sardoy, N., Consalvi, J.L., Porterie, B., &amp; Fernandez-Pello, A.C.
+    (2008). <em>Modeling transport and combustion of firebrands from burning
+    trees.</em> Combustion and Flame <strong>150</strong>(3), 151–169.</li>
+  <li>Lee, J.H. (2009). <em>Flux-time product for predicting ignition.</em>
+    Fire Safety Science 9, 1029–1040.</li>
+</ul>
+<p>
+Reference datasets:
+</p>
+<ul>
+  <li>CAL FIRE Damage Inspection (DINS) —
+    <a href="https://gis.data.cnra.ca.gov">gis.data.cnra.ca.gov</a></li>
+  <li>MTBS — <a href="https://www.mtbs.gov">www.mtbs.gov</a></li>
+  <li>Short, K.C. — Spatial wildfire occurrence data for the United States,
+    1992–2015 (FPA-FOD; Kaggle mirror
+    <code>rtatman/188-million-us-wildfires</code>)</li>
+  <li>Radeloff, V.C. et al. — USFS Wildland-Urban Interface 2020, SILVIS Lab —
+    <a href="https://silvis.forest.wisc.edu/data/wui-change/">silvis.forest.wisc.edu/data/wui-change/</a></li>
+</ul>
+
+</body>
+</html>
