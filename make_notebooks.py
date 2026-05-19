@@ -82,12 +82,40 @@ def build_notebook(
         md(
             "First, install dependencies into the active kernel. Idempotent — "
             "pip skips anything already satisfied. `git-lfs` is included so "
-            "the LFS-tracked GeoJSON / zip / shapefile inputs are pulled "
-            "correctly on a fresh clone.",
+            "the LFS-tracked GeoJSON / zip / shapefile inputs can be pulled "
+            "on a fresh clone where the system `git-lfs` wasn't installed "
+            "before `git clone`.",
         ),
         code(
             """
             %pip install -q -r requirements.txt
+            """
+        ),
+        md(
+            "Pull the LFS-tracked binaries. Without this step, files like "
+            "`outputs/<scenario>_risk_scored.geojson` are still ~150-byte "
+            "pointer texts and downstream cells fail with "
+            "`DataSourceError: not recognized as a supported file format`.",
+        ),
+        code(
+            """
+            import os, subprocess
+            subprocess.run(['git', 'lfs', 'install', '--local'], check=False)
+            subprocess.run(['git', 'lfs', 'pull'], check=False)
+
+            # Sanity check: any LFS-tracked file we'll read below should be
+            # a real binary now, not a pointer.
+            def _assert_not_lfs_pointer(path):
+                if not os.path.exists(path):
+                    return
+                with open(path, 'rb') as fh:
+                    head = fh.read(64)
+                if head.startswith(b'version https://git-lfs'):
+                    raise RuntimeError(
+                        f"{path} is still a git-lfs pointer. "
+                        "`git lfs pull` failed — run it manually from the "
+                        "repo root, then re-execute this cell."
+                    )
             """
         ),
         code(
@@ -248,6 +276,7 @@ def build_notebook(
                 )
                 scored = results[SCENARIO.name]
             else:
+                _assert_not_lfs_pointer(out_path)
                 scored = gpd.read_file(out_path)
                 print(f"loaded cached scores from {out_path}")
 
@@ -289,8 +318,14 @@ def build_notebook(
 
                 # Parse the per-property ignition timestamps out of the
                 # OroraTech HTML viewer if the cached GeoJSON isn't already
-                # on disk. This keeps the notebook self-bootstrapping.
-                if not os.path.exists(PROPERTY_SIM):
+                # on disk (or is still a git-lfs pointer from a stale clone).
+                def _needs_regenerate(p):
+                    if not os.path.exists(p):
+                        return True
+                    with open(p, 'rb') as fh:
+                        return fh.read(64).startswith(b'version https://git-lfs')
+
+                if _needs_regenerate(PROPERTY_SIM):
                     from extract_property_ignitions import SPECS, run_one
                     run_one(SPECS[SCENARIO.name])
 
