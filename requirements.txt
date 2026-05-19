@@ -1,3 +1,4 @@
+git-lfs>=1.7
 geopandas>=0.14
 pandas>=2.0
 numpy>=1.24

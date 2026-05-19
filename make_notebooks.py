@@ -79,6 +79,17 @@ def build_notebook(
             "```",
         ),
         md("## 1 · Setup"),
+        md(
+            "First, install dependencies into the active kernel. Idempotent — "
+            "pip skips anything already satisfied. `git-lfs` is included so "
+            "the LFS-tracked GeoJSON / zip / shapefile inputs are pulled "
+            "correctly on a fresh clone.",
+        ),
+        code(
+            """
+            %pip install -q -r requirements.txt
+            """
+        ),
         code(
             """
             import sys, os
@@ -275,6 +286,13 @@ def build_notebook(
             ),
             code(textwrap.dedent("""
                 PROPERTY_SIM = __PROPERTY_SIM_PATH__
+
+                # Parse the per-property ignition timestamps out of the
+                # OroraTech HTML viewer if the cached GeoJSON isn't already
+                # on disk. This keeps the notebook self-bootstrapping.
+                if not os.path.exists(PROPERTY_SIM):
+                    from extract_property_ignitions import SPECS, run_one
+                    run_one(SPECS[SCENARIO.name])
 
                 prop_sim = gpd.read_file(PROPERTY_SIM)
                 print(f"per-property ignitions: {len(prop_sim):,}"
