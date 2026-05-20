@@ -121,8 +121,8 @@ specific components:
 <p>
 Both scenarios also use OroraTech's own coupled fire-spread simulation as the
 scenario-hazard input. The wildland front is carried by
-<strong>ForeFire</strong> (Filippi et al. 2010), a discrete-event
-front-tracking solver running the Rothermel (1972) surface fire-spread model
+<strong>ForeFire</strong> (Filippi et al. 2025), a modular C++ simulation
+engine for wildland-fire spread, running the Rothermel (1972) surface model
 on the LANDFIRE-derived fuel / terrain / moisture rasters. We couple a WUI
 structure-ignition overlay implementing the Purnomo et al. (2024 / 2025)
 semi-physical level-set model on top of ForeFire — direct flame contact,
@@ -494,10 +494,11 @@ models and solvers:
   <li>Rothermel, R.C. (1972). <em>A mathematical model for predicting fire
     spread in wildland fuels.</em> USDA Forest Service Research Paper INT-115,
     Ogden, UT.</li>
-  <li>Filippi, J.-B., Morandini, F., Balbi, J.H., &amp; Lynch, D.R. (2010).
-    <em>Discrete event front-tracking simulation of a physical fire-spread
-    model.</em> SIMULATION <strong>86</strong>(10), 629–646.
-    <a href="https://doi.org/10.1177/0037549709343117">doi:10.1177/0037549709343117</a>.
+  <li>Filippi, J.-B., Baggio, R., Paugam, R., Bosseur, F., Leblanc, A.,
+    &amp; Alonso-Pinar, A. (2025). <em>ForeFire: A modular, scriptable C++
+    simulation engine and library for wildland-fire spread.</em> Journal of
+    Open Source Software <strong>10</strong>(116), 8680.
+    <a href="https://doi.org/10.21105/joss.08680">doi:10.21105/joss.08680</a>.
     Source code: <a href="https://github.com/forefireAPI/firefront">github.com/forefireAPI/firefront</a>.</li>
   <li>Purnomo, D.M.J., Qin, Y., Theodori, M., Zamanialaei, M., Lautenberger,
     C., Trouvé, A., &amp; Gollner, M. (2024). <em>Reconstructing modes of
